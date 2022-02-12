@@ -3,13 +3,13 @@ package sonosapi
 import (
 	"bytes"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 )
 
-const soapEnvNS = "http://schemas.xmlsoap.org/soap/envelope/"
+const soapEnvelopeNS = "http://schemas.xmlsoap.org/soap/envelope/"
+const soapEncodingNS = "http://schemas.xmlsoap.org/soap/encoding/"
 
 type soapRequest struct {
 	XMLName          xml.Name `xml:"s:Envelope"`
@@ -48,11 +48,11 @@ func (s *soapResponseBody) UnmarshalXML(decoder *xml.Decoder, start xml.StartEle
 
 		switch elem := token.(type) {
 		case xml.StartElement:
-			if elem.Name.Space == soapEnvNS && elem.Name.Local == "Fault" {
+			if elem.Name.Space == soapEnvelopeNS && elem.Name.Local == "Fault" {
 				fault := soapFault{}
 				err := decoder.DecodeElement(&fault, &elem)
 				if err != nil {
-					return errors.New("decode error")
+					return fmt.Errorf("decode error")
 				}
 				s.Fault = &fault
 				continue
@@ -101,20 +101,19 @@ func (s *soapResponseBody) UnmarshalXML(decoder *xml.Decoder, start xml.StartEle
 			}
 
 			if err != nil {
-				return errors.New("decode error")
+				return fmt.Errorf("decode error")
 			}
 
 		case xml.EndElement:
-			if elem.Name.Space == soapEnvNS && elem.Name.Local == "Body" {
+			if elem.Name.Space == soapEnvelopeNS && elem.Name.Local == "Body" {
 				return nil
 			} else if ignoreEnd {
 				ignoreEnd = false
 			} else {
-				return errors.New(fmt.Sprintf("unknown end element: %s", elem.Name))
+				return fmt.Errorf("unknown end element: %s", elem.Name)
 			}
 		}
 	}
-	return errors.New("OH GOD REACHED THE END")
 }
 
 type soapFault struct {
@@ -138,8 +137,8 @@ type soapFaultDetail struct {
 func (device *sonosDevice) deviceRequest(suffix string, namespace string, action string, payload interface{}) (*soapResponse, error) {
 	url := fmt.Sprintf("%s/%s", device.baseURL.String(), suffix)
 	aRequest := soapRequest{
-		XMLNsSoap:        "http://schemas.xmlsoap.org/soap/envelope/",
-		XMLEncodingStyle: "http://schemas.xmlsoap.org/soap/encoding/",
+		XMLNsSoap:        soapEnvelopeNS,
+		XMLEncodingStyle: soapEncodingNS,
 		Body: soapBody{
 			Payload: payload,
 		},
@@ -153,32 +152,32 @@ func (device *sonosDevice) deviceRequest(suffix string, namespace string, action
 	buffer := bytes.NewBuffer(marshalled)
 
 	client := http.Client{}
-	request, err := http.NewRequest("POST", url, buffer)
+	request, err := http.NewRequest(http.MethodPost, url, buffer)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Unable to construct request: %s", err))
+		return nil, fmt.Errorf("unable to construct request: %s", err)
 	}
 
 	request.Header.Set("soapaction", fmt.Sprintf("%s#%s", namespace, action))
 
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Unable to make request: %s", err))
+		return nil, fmt.Errorf("unable to make request: %s", err)
 	}
 
-	if response.StatusCode != 200 {
-		return nil, errors.New(fmt.Sprintf("request failure: %d", response.StatusCode))
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("request failure: %d", response.StatusCode)
 	}
 
 	dataBytes, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Could not read response: %s", err))
+		return nil, fmt.Errorf("could not read response: %s", err)
 	}
 
 	parsedResponse := soapResponse{}
 
 	err = xml.Unmarshal(dataBytes, &parsedResponse)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Could not parse response: %s", err))
+		return nil, fmt.Errorf("could not parse response: %s", err)
 	}
 
 	return &parsedResponse, nil
